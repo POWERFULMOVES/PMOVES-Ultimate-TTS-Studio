@@ -9614,9 +9614,12 @@ if __name__ == "__main__":
     # Create and launch the interface
     with suppress_specific_warnings():
         demo = create_gradio_interface()
+        server_name = os.environ.get("GRADIO_SERVER_NAME", "0.0.0.0")
+        server_port = int(os.environ.get("GRADIO_SERVER_PORT", os.environ.get("PORT", "7860")))
+        share = os.environ.get("GRADIO_SHARE", "false").strip().lower() in ("1", "true", "yes", "y")
         demo.launch(
-            server_name="127.0.0.1",
-            server_port=7860,
-            share=False,
+            server_name=server_name,
+            server_port=server_port,
+            share=share,
             show_error=True
         ) 
