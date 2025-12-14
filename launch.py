@@ -161,9 +161,9 @@ try:
         from higgs_audio_handler import generate_higgs_audio_tts, get_higgs_audio_handler
     HIGGS_AUDIO_AVAILABLE = True
     print("✅ Higgs Audio handler loaded")
-except ImportError:
+except Exception as e:
     HIGGS_AUDIO_AVAILABLE = False
-    print("⚠️ Higgs Audio not available. Some features will be disabled.")
+    print(f"⚠️ Higgs Audio not available ({type(e).__name__}: {e}). Some features will be disabled.")
 
 # KittenTTS imports
 try:
