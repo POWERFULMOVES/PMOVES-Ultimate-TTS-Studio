@@ -1,4 +1,4 @@
-name: ghcr
+name: Build and publish Ultimate-TTS-Studio to GHCR
 
 on:
   push:
@@ -7,16 +7,50 @@ on:
   schedule:
     - cron: "17 4 * * *"
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: pmoves-ultimate-tts-studio
+  GHCR_USERNAME: ${{ secrets.GHCR_USERNAME || github.actor }}
+  GHCR_PASSWORD: ${{ secrets.GH_PAT_PUBLISH || github.token }}
+
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            ghcr.io:443
+            registry-1.docker.io:443
+            auth.docker.io:443
+            production.cloudflare.docker.com:443
+            archive.ubuntu.com:80
+            archive.ubuntu.com:443
+            security.ubuntu.com:80
+            security.ubuntu.com:443
+            files.pythonhosted.org:443
+            pypi.org:443
+            huggingface.co:443
+            cdn-lfs.huggingface.co:443
+
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Free disk space (runner)
+        run: |
+          set -euxo pipefail
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
+          sudo rm -rf /usr/local/share/boost || true
+          df -h
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -24,24 +58,34 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.4.0
+
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ env.GHCR_USERNAME }}
+          password: ${{ env.GHCR_PASSWORD }}
 
-      - name: Docker metadata
+      - name: Compute tags
         id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            ghcr.io/powerfulmoves/pmoves-ultimate-tts-studio
-          tags: |
-            type=raw,value=pmoves-latest
-            type=sha,prefix=sha-
+        run: |
+          DATE_TAG=$(date +%Y%m%d)
+          SHA_SHORT=${GITHUB_SHA::7}
+          GHCR_NS_RAW="${{ secrets.CI_GHCR_NAMESPACE }}"
+          if [ -z "$GHCR_NS_RAW" ]; then GHCR_NS_RAW="${{ secrets.GHCR_NAMESPACE }}"; fi
+          if [ -z "$GHCR_NS_RAW" ]; then GHCR_NS_RAW="${{ github.repository_owner }}"; fi
+          GHCR_NS="${GHCR_NS_RAW,,}"
+          echo "ghcr_ns=${GHCR_NS}" >> $GITHUB_OUTPUT
+          echo "date_tag=${DATE_TAG}" >> $GITHUB_OUTPUT
+          echo "sha_short=${SHA_SHORT}" >> $GITHUB_OUTPUT
+          TAGS="${{ env.REGISTRY }}/${GHCR_NS}/${{ env.IMAGE_NAME }}:pmoves-latest"
+          TAGS="$TAGS,${{ env.REGISTRY }}/${GHCR_NS}/${{ env.IMAGE_NAME }}:${DATE_TAG}-${SHA_SHORT}"
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -49,5 +93,99 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
+      - name: Cosign sign GHCR digest (keyless)
+        env:
+          IMAGE_DIGEST_REF: ${{ env.REGISTRY }}/${{ steps.meta.outputs.ghcr_ns }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "→ cosign sign attempt ${attempt}/3"
+            if cosign sign --yes "$IMAGE_DIGEST_REF"; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          echo "✖ cosign sign failed after retries"
+          exit 1
+
+      - name: Install Syft (SBOM)
+        uses: anchore/sbom-action/download-syft@v0.17.7
+
+      - name: Generate SBOM (CycloneDX)
+        id: sbom
+        run: |
+          set -euo pipefail
+          TAG_PRIMARY="${{ env.REGISTRY }}/${{ steps.meta.outputs.ghcr_ns }}/${{ env.IMAGE_NAME }}:pmoves-latest"
+          syft packages "$TAG_PRIMARY" -o cyclonedx-json > sbom.cdx.json
+          echo "sbom_path=sbom.cdx.json" >> $GITHUB_OUTPUT
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ultimate-tts-studio-sbom
+          path: ${{ steps.sbom.outputs.sbom_path }}
+
+      - name: Free disk space (docker build cache)
+        run: |
+          set -euxo pipefail
+          docker system df || true
+          docker buildx prune -af || true
+          docker builder prune -af || true
+          docker system df || true
+          df -h
+
+      - name: Pull image for Trivy (private GHCR)
+        run: |
+          set -euo pipefail
+          docker pull "${{ env.REGISTRY }}/${{ steps.meta.outputs.ghcr_ns }}/${{ env.IMAGE_NAME }}:pmoves-latest"
+
+      - name: Trivy vulnerability scan (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ steps.meta.outputs.ghcr_ns }}/${{ env.IMAGE_NAME }}:pmoves-latest
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'HIGH,CRITICAL'
+          scanners: 'vuln'
+
+      - name: Trivy vulnerability scan report (includes unfixed)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ steps.meta.outputs.ghcr_ns }}/${{ env.IMAGE_NAME }}:pmoves-latest
+          format: table
+          output: trivy-ultimate-tts-studio.txt
+          exit-code: '0'
+          ignore-unfixed: false
+          vuln-type: 'os,library'
+          severity: 'HIGH,CRITICAL'
+          scanners: 'vuln'
+
+      - name: Upload Trivy report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ultimate-tts-studio-trivy
+          path: trivy-ultimate-tts-studio.txt
+
+      - name: Cosign verify GHCR digest (keyless)
+        env:
+          IMAGE_DIGEST_REF: ${{ env.REGISTRY }}/${{ steps.meta.outputs.ghcr_ns }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euo pipefail
+          issuer="https://token.actions.githubusercontent.com"
+          identity="https://github.com/${GITHUB_WORKFLOW_REF}"
+          for attempt in 1 2 3; do
+            echo "→ cosign verify attempt ${attempt}/3"
+            if cosign verify --certificate-oidc-issuer "$issuer" --certificate-identity "$identity" "$IMAGE_DIGEST_REF"; then
+              exit 0
+            fi
+            sleep $((attempt * 3))
+          done
+          echo "✖ cosign verify failed after retries"
+          exit 1
