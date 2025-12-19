@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test all 7 TTS engines via Gradio API.
+"""Test TTS engines via Gradio API.
 
 This script runs inside the Pinokio conda environment and tests
 each TTS engine by loading it and optionally running synthesis.
@@ -25,15 +25,21 @@ except ImportError:
 DEFAULT_URL = os.getenv("GRADIO_URL", "http://127.0.0.1:7860/")
 
 
-# Engine definitions: (id, display_name, load_endpoint, requires_ref_audio)
+# Engine definitions: (id, display_name, load_endpoint, load_args)
+# load_args: None for no params, dict for named params, or "skip" to skip loading
 ENGINES = [
-    ("kitten_tts", "KittenTTS", "handle_load_kitten", False),
-    ("kokoro", "Kokoro TTS", "handle_load_kokoro", False),
-    ("f5_tts", "F5-TTS", "handle_f5_load", True),
-    ("indextts2", "IndexTTS2", "handle_load_indextts2", True),
-    ("fish", "Fish Speech", "handle_load_fish", True),
-    ("chatterbox", "ChatterboxTTS", "handle_load_chatterbox", True),
-    ("voxcpm", "VoxCPM", "handle_load_voxcpm", True),
+    ("kitten_tts", "KittenTTS", "handle_load_kitten", None),
+    ("kokoro", "Kokoro TTS", "handle_load_kokoro", None),
+    ("f5_tts", "F5-TTS", "handle_f5_load", {"model_name": "F5-TTS Base"}),
+    ("indextts", "IndexTTS", "handle_load_indextts", None),
+    ("indextts2", "IndexTTS2", "handle_load_indextts2", None),
+    ("fish", "Fish Speech", "handle_load_fish", None),
+    ("chatterbox", "ChatterboxTTS", "handle_load_chatterbox", None),
+    ("chatterbox_mtl", "Chatterbox Multilingual", "handle_load_chatterbox_multilingual", None),
+    ("higgs", "Higgs Audio", "handle_load_higgs", None),
+    ("voxcpm", "VoxCPM", "handle_load_voxcpm", None),
+    # VibeVoice requires model path - skip in basic test
+    ("vibevoice", "VibeVoice", "handle_vibevoice_load", "skip"),
 ]
 
 
@@ -68,13 +74,24 @@ def main():
     print_header("Loading TTS Models")
 
     results = {}
-    for engine_id, name, load_endpoint, requires_ref in ENGINES:
+    for engine_id, name, load_endpoint, load_args in ENGINES:
         print(f"  {name}...", end=" ", flush=True)
+
+        # Skip engines that require complex setup
+        if load_args == "skip":
+            print("⏭ Skipped (requires setup)")
+            results[engine_id] = "skip"
+            continue
+
         try:
-            result = client.predict(api_name=f"/{load_endpoint}")
+            if load_args is None:
+                result = client.predict(api_name=f"/{load_endpoint}")
+            else:
+                result = client.predict(**load_args, api_name=f"/{load_endpoint}")
+
             status = str(result[0]) if result else ""
 
-            if "✅" in status or "Loaded" in status.lower():
+            if "✅" in status or "Loaded" in status.lower() or "ready" in status.lower():
                 print("✓ Loaded")
                 results[engine_id] = True
             elif "download" in status.lower():
@@ -95,33 +112,37 @@ def main():
 
     loaded = sum(1 for v in results.values() if v is True)
     needs_download = sum(1 for v in results.values() if v == "download")
+    skipped = sum(1 for v in results.values() if v == "skip")
     failed = sum(1 for v in results.values() if v is False)
-    total = len(results)
+    tested = len(results) - skipped
 
-    print(f"✓ Loaded:        {loaded}/{total}")
-    print(f"⚠ Needs download: {needs_download}/{total}")
-    print(f"❌ Failed:        {failed}/{total}")
+    print(f"✓ Loaded:        {loaded}/{tested}")
+    print(f"⚠ Needs download: {needs_download}/{tested}")
+    print(f"❌ Failed:        {failed}/{tested}")
+    if skipped > 0:
+        print(f"⏭ Skipped:       {skipped}")
+
+    # Helper to get engine name
+    def get_name(eid):
+        return next(n for e, n, _, _ in ENGINES if e == eid)
 
     if loaded > 0:
         print("\nEngines ready for use:")
         for engine_id, status in results.items():
             if status is True:
-                name = next(n for e, n, _, _ in ENGINES if e == engine_id)
-                print(f"  ✓ {name}")
+                print(f"  ✓ {get_name(engine_id)}")
 
     if needs_download > 0:
         print("\nEngines needing model download:")
         for engine_id, status in results.items():
             if status == "download":
-                name = next(n for e, n, _, _ in ENGINES if e == engine_id)
-                print(f"  ⚠ {name}")
+                print(f"  ⚠ {get_name(engine_id)}")
 
     if failed > 0:
         print("\nFailed engines:")
         for engine_id, status in results.items():
             if status is False:
-                name = next(n for e, n, _, _ in ENGINES if e == engine_id)
-                print(f"  ❌ {name}")
+                print(f"  ❌ {get_name(engine_id)}")
 
     print("\nDone!")
     return 0 if loaded > 0 else 1
