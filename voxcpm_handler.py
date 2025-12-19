@@ -5,9 +5,21 @@ Provides integration with VoxCPM Text-to-Speech system with voice cloning capabi
 
 import os
 import sys
+
+# CRITICAL: Disable torch dynamo/inductor BEFORE importing torch
+# This fixes CUDA graph assertion errors in VoxCPM
+os.environ['TORCHINDUCTOR_DISABLE'] = '1'
+os.environ['TORCH_COMPILE_DISABLE'] = '1'
+os.environ['TORCHDYNAMO_DISABLE'] = '1'
+
 import warnings
 import numpy as np
 import torch
+
+# Disable dynamo immediately after torch import
+torch._dynamo.config.suppress_errors = True
+torch._dynamo.config.disable = True
+
 import tempfile
 import json
 from pathlib import Path
@@ -71,8 +83,8 @@ class VoxCPMHandler:
         self.model = None
         self.whisper_model = None
         self.device = self._get_device()
-        self.sample_rate = 16000
-        self.model_id = "openbmb/VoxCPM-0.5B"
+        self.sample_rate = 44100  # VoxCPM1.5 uses 44.1kHz Audio VAE
+        self.model_id = "openbmb/VoxCPM1.5"
         self.checkpoints_dir = Path("checkpoints/voxcpm")
         self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
         
@@ -450,18 +462,26 @@ class VoxCPMHandler:
                 print(f"🎲 Using seed {actual_seed} for chunk {i+1}")
                 
                 # Generate speech for this chunk
-                wav = self.model.generate(
-                    text=chunk,
-                    prompt_wav_path=prompt_wav_path,
-                    prompt_text=final_prompt_text,
-                    cfg_value=cfg_value,
-                    inference_timesteps=int(inference_timesteps),
-                    normalize=normalize,
-                    denoise=denoise,
-                    retry_badcase=retry_badcase,
-                    retry_badcase_max_times=int(retry_badcase_max_times),
-                    retry_badcase_ratio_threshold=retry_badcase_ratio_threshold
-                )
+                # Disable CUDA graphs and dynamo to avoid assertion errors
+                with torch.no_grad():
+                    # Reset dynamo state before each generation
+                    try:
+                        torch._dynamo.reset()
+                    except:
+                        pass
+                    
+                    wav = self.model.generate(
+                        text=chunk,
+                        prompt_wav_path=prompt_wav_path,
+                        prompt_text=final_prompt_text,
+                        cfg_value=cfg_value,
+                        inference_timesteps=int(inference_timesteps),
+                        normalize=normalize,
+                        denoise=denoise,
+                        retry_badcase=retry_badcase,
+                        retry_badcase_max_times=int(retry_badcase_max_times),
+                        retry_badcase_ratio_threshold=retry_badcase_ratio_threshold
+                    )
                 
                 # Convert to numpy if needed
                 if torch.is_tensor(wav):
@@ -502,16 +522,18 @@ class VoxCPMHandler:
             
         except Exception as e:
             import traceback
-            traceback.print_exc()
-            print(f"❌ Error generating speech: {e}")
-            return None, f"❌ Error generating speech: {str(e)}"
+            tb_str = traceback.format_exc()
+            print(f"❌ Full traceback:\n{tb_str}")
+            error_msg = str(e) if str(e) else f"Exception type: {type(e).__name__}"
+            print(f"❌ Error generating speech: {error_msg}")
+            return None, f"❌ Error generating speech: {error_msg}\n{tb_str}"
     
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about the VoxCPM model"""
         return {
             'name': 'VoxCPM',
-            'version': '0.5B',
-            'description': 'VoxCPM Text-to-Speech with voice cloning capabilities',
+            'version': '1.5',
+            'description': 'VoxCPM 1.5 Text-to-Speech with voice cloning capabilities',
             'sample_rate': self.sample_rate,
             'supports_voice_cloning': True,
             'supports_emotion_control': False,

@@ -202,6 +202,20 @@ except ImportError:
     VOXCPM_AVAILABLE = False
     print("⚠️ VoxCPM not available. Some features will be disabled.")
 
+# Chatterbox Turbo imports
+try:
+    with suppress_specific_warnings():
+        from chatterbox_turbo_handler import (
+            get_chatterbox_turbo_handler, generate_chatterbox_turbo_tts, 
+            init_chatterbox_turbo, unload_chatterbox_turbo, get_chatterbox_turbo_status,
+            CHATTERBOX_TURBO_AVAILABLE as _TURBO_AVAILABLE
+        )
+    CHATTERBOX_TURBO_AVAILABLE = _TURBO_AVAILABLE
+    print("✅ Chatterbox Turbo handler loaded")
+except ImportError:
+    CHATTERBOX_TURBO_AVAILABLE = False
+    print("⚠️ Chatterbox Turbo not available. Some features will be disabled.")
+
 # ===== VOXCPM MODEL MANAGEMENT =====
 def init_voxcpm_model():
     """Initialize VoxCPM model"""
@@ -306,14 +320,14 @@ def unload_kitten_tts_model():
         return f"⚠️ Error unloading KittenTTS: {str(e)}"
 
 # ===== VIBEVOICE MODEL MANAGEMENT =====
-def init_vibevoice_model(model_path: str = "models/VibeVoice-1.5B"):
+def init_vibevoice_model(model_path: str = "models/VibeVoice-1.5B", use_flash_attention: bool = False):
     """Initialize VibeVoice model"""
     if not VIBEVOICE_AVAILABLE:
         return False, "❌ VibeVoice not available"
     
     try:
         MODEL_STATUS['vibevoice'] = {'loading': True}
-        success, message = init_vibevoice(model_path)
+        success, message = init_vibevoice(model_path, use_flash_attention=use_flash_attention)
         if success:
             MODEL_STATUS['vibevoice'] = {'loaded': True, 'loading': False}
             return True, "✅ VibeVoice model loaded successfully"
@@ -684,6 +698,23 @@ def generate_conversation_audio_simple(
                         2.0,   # repetition_penalty
                         0.05,  # min_p
                         1.0,   # top_p
+                        300,   # chunk_size
+                        effects_settings,
+                        audio_format,
+                        skip_file_saving=True
+                    )
+                elif selected_engine == 'Chatterbox Turbo':
+                    print(f"🚀 Using Chatterbox Turbo for {speaker}")
+                    result = generate_chatterbox_turbo_tts(
+                        text,
+                        ref_audio or '',
+                        0.5,   # exaggeration
+                        0.8,   # temperature
+                        0.5,   # cfg_weight
+                        1.2,   # repetition_penalty
+                        0.05,  # min_p
+                        1.0,   # top_p
+                        0,     # seed
                         300,   # chunk_size
                         effects_settings,
                         audio_format,
@@ -1913,6 +1944,7 @@ loaded_voices = {}
 MODEL_STATUS = {
     'chatterbox': {'loaded': False, 'loading': False},
     'chatterbox_multilingual': {'loaded': False, 'loading': False},
+    'chatterbox_turbo': {'loaded': False, 'loading': False},
     'kokoro': {'loaded': False, 'loading': False},
     'vibevoice': {'loaded': False, 'loading': False},
     'fish_speech': {'loaded': False, 'loading': False},
@@ -2021,6 +2053,49 @@ def unload_chatterbox_multilingual():
         print(error_msg)
         return error_msg
 
+def init_chatterbox_turbo_model():
+    """Initialize Chatterbox Turbo model."""
+    global MODEL_STATUS
+    if not CHATTERBOX_TURBO_AVAILABLE:
+        return False, "❌ Chatterbox Turbo not available - check installation"
+    
+    if MODEL_STATUS['chatterbox_turbo']['loaded']:
+        return True, "✅ Chatterbox Turbo already loaded"
+    
+    if MODEL_STATUS['chatterbox_turbo']['loading']:
+        return False, "⏳ Chatterbox Turbo is currently loading..."
+    
+    try:
+        MODEL_STATUS['chatterbox_turbo']['loading'] = True
+        print("🔄 Loading Chatterbox Turbo...")
+        success, message = init_chatterbox_turbo()
+        if success:
+            MODEL_STATUS['chatterbox_turbo']['loaded'] = True
+            MODEL_STATUS['chatterbox_turbo']['loading'] = False
+            print("✅ Chatterbox Turbo loaded successfully")
+            return True, "✅ Chatterbox Turbo loaded successfully"
+        else:
+            MODEL_STATUS['chatterbox_turbo']['loading'] = False
+            return False, message
+    except Exception as e:
+        MODEL_STATUS['chatterbox_turbo']['loading'] = False
+        error_msg = f"❌ Failed to load Chatterbox Turbo: {e}"
+        print(error_msg)
+        return False, error_msg
+
+def unload_chatterbox_turbo_model():
+    """Unload Chatterbox Turbo model to free memory."""
+    global MODEL_STATUS
+    try:
+        message = unload_chatterbox_turbo()
+        MODEL_STATUS['chatterbox_turbo']['loaded'] = False
+        print("✅ Chatterbox Turbo unloaded successfully")
+        return message
+    except Exception as e:
+        error_msg = f"❌ Error unloading Chatterbox Turbo: {e}"
+        print(error_msg)
+        return error_msg
+
 def init_kokoro():
     """Initialize Kokoro TTS models and pipelines."""
     global KOKORO_PIPELINES, MODEL_STATUS
@@ -2118,7 +2193,7 @@ def init_fish_speech():
         checkpoint_path = "checkpoints/openaudio-s1-mini"
         if not os.path.exists(checkpoint_path):
             MODEL_STATUS['fish_speech']['loading'] = False
-            error_msg = "❌ Fish Speech checkpoints not found. Please download them first:\nhuggingface-cli download fishaudio/openaudio-s1-mini --local-dir checkpoints/openaudio-s1-mini"
+            error_msg = "❌ Fish Speech checkpoints not found. Please download them first:\nhf download cocktailpeanut/oa --local-dir ./checkpoints/openaudio-s1-mini"
             print(error_msg)
             return False, error_msg
         
@@ -4056,6 +4131,15 @@ def convert_ebook_to_audiobook(
     chatterbox_mtl_min_p: float = 0.05,
     chatterbox_mtl_top_p: float = 1.0,
     chatterbox_mtl_seed: int = 0,
+    # Chatterbox Turbo parameters
+    chatterbox_turbo_ref_audio: str = None,
+    chatterbox_turbo_exaggeration: float = 0.5,
+    chatterbox_turbo_temperature: float = 0.8,
+    chatterbox_turbo_cfg_weight: float = 0.5,
+    chatterbox_turbo_repetition_penalty: float = 1.2,
+    chatterbox_turbo_min_p: float = 0.05,
+    chatterbox_turbo_top_p: float = 1.0,
+    chatterbox_turbo_seed: int = 0,
     # Kokoro parameters
     kokoro_voice: str = 'af_heart',
     kokoro_speed: float = 1.0,
@@ -4214,6 +4298,18 @@ def convert_ebook_to_audiobook(
                     chatterbox_mtl_cfg_weight, chatterbox_mtl_repetition_penalty,
                     chatterbox_mtl_min_p, chatterbox_mtl_top_p,
                     max_chunk_length, effects_settings, "wav", skip_file_saving=True
+                )
+            elif tts_engine == "Chatterbox Turbo":
+                print(f"🚀 Using Chatterbox Turbo with ref audio: {chatterbox_turbo_ref_audio}")
+                if not chatterbox_turbo_ref_audio:
+                    print("⚠️ No reference audio provided - using default voice")
+                audio_result, status = generate_chatterbox_turbo_tts(
+                    chunk['content'], chatterbox_turbo_ref_audio,
+                    chatterbox_turbo_exaggeration, chatterbox_turbo_temperature,
+                    chatterbox_turbo_cfg_weight, chatterbox_turbo_repetition_penalty,
+                    chatterbox_turbo_min_p, chatterbox_turbo_top_p,
+                    chatterbox_turbo_seed, max_chunk_length,
+                    effects_settings, "wav", skip_file_saving=True
                 )
             elif tts_engine == "Kokoro TTS":
                 audio_result, status = generate_kokoro_tts(
@@ -4642,6 +4738,16 @@ def generate_unified_tts(
     chatterbox_mtl_top_p: float = 1.0,
     chatterbox_mtl_chunk_size: int = 300,
     chatterbox_mtl_seed: int = 0,
+    # Chatterbox Turbo parameters
+    chatterbox_turbo_ref_audio: str = None,
+    chatterbox_turbo_exaggeration: float = 0.5,
+    chatterbox_turbo_temperature: float = 0.8,
+    chatterbox_turbo_cfg_weight: float = 0.5,
+    chatterbox_turbo_repetition_penalty: float = 1.2,
+    chatterbox_turbo_min_p: float = 0.05,
+    chatterbox_turbo_top_p: float = 1.0,
+    chatterbox_turbo_chunk_size: int = 300,
+    chatterbox_turbo_seed: int = 0,
     # Kokoro parameters
     kokoro_voice: str = 'af_heart',
     kokoro_speed: float = 1.0,
@@ -4762,6 +4868,14 @@ def generate_unified_tts(
             chatterbox_mtl_min_p, chatterbox_mtl_top_p, chatterbox_mtl_chunk_size,
             effects_settings, audio_format
         )
+    elif tts_engine == "Chatterbox Turbo":
+        return generate_chatterbox_turbo_tts(
+            text_input, chatterbox_turbo_ref_audio, chatterbox_turbo_exaggeration,
+            chatterbox_turbo_temperature, chatterbox_turbo_cfg_weight,
+            chatterbox_turbo_repetition_penalty, chatterbox_turbo_min_p,
+            chatterbox_turbo_top_p, chatterbox_turbo_seed, chatterbox_turbo_chunk_size,
+            effects_settings, audio_format
+        )
     elif tts_engine == "Kokoro TTS":
         return generate_kokoro_tts(
             text_input, kokoro_voice, kokoro_speed, effects_settings, audio_format
@@ -4826,7 +4940,39 @@ def create_gradio_interface():
             secondary_hue="blue",
             neutral_hue="gray",
             font=[gr.themes.GoogleFont("Inter"), "system-ui", "sans-serif"],
+        ).set(
+            body_background_fill="*neutral_950",
+            body_background_fill_dark="*neutral_950",
         ),
+        js="""
+        () => {
+            // Force dark mode on page load
+            document.body.classList.remove('light');
+            document.body.classList.add('dark');
+            
+            // Override any theme preference detection
+            const style = document.createElement('style');
+            style.textContent = `
+                .light { display: none !important; }
+                body, .gradio-container { color-scheme: dark !important; }
+            `;
+            document.head.appendChild(style);
+            
+            // Set localStorage to persist dark mode
+            localStorage.setItem('theme', 'dark');
+            
+            // Watch for theme changes and revert to dark
+            const observer = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    if (mutation.attributeName === 'class' && document.body.classList.contains('light')) {
+                        document.body.classList.remove('light');
+                        document.body.classList.add('dark');
+                    }
+                });
+            });
+            observer.observe(document.body, { attributes: true });
+        }
+        """,
         css="""
         /* CSS Variables for Theme Support */
         :root {
@@ -4840,70 +4986,49 @@ def create_gradio_interface():
             --gradient-bg: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
         }
         
-        /* Light Mode Variables */
+        /* Force Dark Mode Variables for Light Mode */
         .light :root,
         [data-theme="light"] :root,
-        .gradio-container.light {
-            --text-primary: rgba(0, 0, 0, 0.9);
-            --text-secondary: rgba(0, 0, 0, 0.7);
-            --text-muted: rgba(0, 0, 0, 0.6);
-            --bg-primary: rgba(0, 0, 0, 0.05);
-            --bg-secondary: rgba(0, 0, 0, 0.03);
-            --border-color: rgba(0, 0, 0, 0.1);
-            --accent-color: #5a67d8;
-            --gradient-bg: linear-gradient(135deg, #f7fafc 0%, #edf2f7 50%, #e2e8f0 100%);
-        }
-        
-        /* Auto-detect light mode */
-        @media (prefers-color-scheme: light) {
-            :root {
-                --text-primary: rgba(0, 0, 0, 0.9);
-                --text-secondary: rgba(0, 0, 0, 0.7);
-                --text-muted: rgba(0, 0, 0, 0.6);
-                --bg-primary: rgba(0, 0, 0, 0.05);
-                --bg-secondary: rgba(0, 0, 0, 0.03);
-                --border-color: rgba(0, 0, 0, 0.1);
-                --accent-color: #5a67d8;
-                --gradient-bg: linear-gradient(135deg, #f7fafc 0%, #edf2f7 50%, #e2e8f0 100%);
-            }
-        }
-        
-        /* Gradio light mode detection */
-        .gradio-container[data-theme="light"],
         .gradio-container.light,
-        body[data-theme="light"] .gradio-container,
-        body.light .gradio-container {
-            --text-primary: rgba(0, 0, 0, 0.9) !important;
-            --text-secondary: rgba(0, 0, 0, 0.7) !important;
-            --text-muted: rgba(0, 0, 0, 0.6) !important;
-            --bg-primary: rgba(0, 0, 0, 0.05) !important;
-            --bg-secondary: rgba(0, 0, 0, 0.03) !important;
-            --border-color: rgba(0, 0, 0, 0.1) !important;
-            --accent-color: #5a67d8 !important;
-            --gradient-bg: linear-gradient(135deg, #f7fafc 0%, #edf2f7 50%, #e2e8f0 100%) !important;
+        .gradio-container[data-theme="light"],
+        body.light,
+        body[data-theme="light"] {
+            --text-primary: rgba(255, 255, 255, 0.9) !important;
+            --text-secondary: rgba(255, 255, 255, 0.7) !important;
+            --text-muted: rgba(255, 255, 255, 0.6) !important;
+            --bg-primary: rgba(255, 255, 255, 0.05) !important;
+            --bg-secondary: rgba(255, 255, 255, 0.03) !important;
+            --border-color: rgba(255, 255, 255, 0.1) !important;
+            --accent-color: #667eea !important;
+            --gradient-bg: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%) !important;
+            
+            /* Override Gradio default light theme vars */
+            --body-background-fill: transparent !important;
+            --background-fill-primary: rgba(255, 255, 255, 0.05) !important;
+            --background-fill-secondary: rgba(255, 255, 255, 0.03) !important;
+            --block-background-fill: rgba(255, 255, 255, 0.05) !important;
+            --block-border-color: rgba(255, 255, 255, 0.1) !important;
+            --block-label-text-color: rgba(255, 255, 255, 0.9) !important;
+            --input-background-fill: rgba(255, 255, 255, 0.05) !important;
+            --input-border-color: rgba(255, 255, 255, 0.1) !important;
+            --input-placeholder-color: rgba(255, 255, 255, 0.5) !important;
+            --neutral-50: #1f2937 !important;
+            --neutral-100: #374151 !important;
+            --neutral-200: #4b5563 !important;
+            --neutral-300: #9ca3af !important;
+            --neutral-400: #d1d5db !important;
+            --neutral-500: #e5e7eb !important;
+            --neutral-600: #f3f4f6 !important;
+            --neutral-700: #f9fafb !important;
+            --neutral-800: #ffffff !important;
+            --neutral-900: #ffffff !important;
+            --neutral-950: #ffffff !important;
         }
         
-        /* Force light mode styles when body has light class */
-        body.light .gradio-container *,
-        body[data-theme="light"] .gradio-container *,
-        .gradio-container.light *,
-        .gradio-container[data-theme="light"] * {
-            color: var(--text-primary) !important;
-        }
-        
-        /* Specific overrides for light mode text visibility */
-        body.light .gr-markdown,
-        body[data-theme="light"] .gr-markdown,
-        .gradio-container.light .gr-markdown,
-        .gradio-container[data-theme="light"] .gr-markdown {
-            color: rgba(0, 0, 0, 0.9) !important;
-        }
-        
-        body.light label,
-        body[data-theme="light"] label,
-        .gradio-container.light label,
-        .gradio-container[data-theme="light"] label {
-            color: rgba(0, 0, 0, 0.9) !important;
+        /* Force background for light mode */
+        body.light, .gradio-container.light {
+            background: var(--gradient-bg) !important;
+            color: white !important;
         }
         
         /* Global Styles */
@@ -4930,17 +5055,10 @@ def create_gradio_interface():
             animation: gradientShift 20s ease infinite;
             pointer-events: none;
             z-index: 0;
+            animation-play-state: paused;
         }
         
-        /* Light mode background adjustment */
-        @media (prefers-color-scheme: light) {
-            .gradio-container::before {
-                background-image: 
-                    radial-gradient(circle at 20% 80%, rgba(120, 119, 198, 0.1) 0%, transparent 50%),
-                    radial-gradient(circle at 80% 20%, rgba(255, 119, 198, 0.1) 0%, transparent 50%),
-                    radial-gradient(circle at 40% 40%, rgba(120, 219, 255, 0.08) 0%, transparent 50%);
-            }
-        }
+        /* Light mode background adjustment removed */
         
         @keyframes gradientShift {
             0%, 100% { transform: rotate(0deg) scale(1); }
@@ -5691,16 +5809,7 @@ def create_gradio_interface():
             }
         }
         
-        /* Additional light mode fixes */
-        .light .main-title,
-        [data-theme="light"] .main-title {
-            text-shadow: 0 0 40px rgba(102, 126, 234, 0.3) !important;
-        }
-        
-        .light .subtitle,
-        [data-theme="light"] .subtitle {
-            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.1) !important;
-        }
+        /* Additional light mode fixes removed */
         
         /* Dark Theme Overrides */
         .dark {
@@ -5732,16 +5841,8 @@ def create_gradio_interface():
         // Theme detection and handling
         function updateTheme() {
             const container = document.querySelector('.gradio-container');
-            const body = document.body;
-            
-            // Check for Gradio's theme classes
-            if (body.classList.contains('light') || 
-                body.hasAttribute('data-theme') && body.getAttribute('data-theme') === 'light' ||
-                container && (container.classList.contains('light') || 
-                container.hasAttribute('data-theme') && container.getAttribute('data-theme') === 'light')) {
-                container.classList.add('light');
-                container.setAttribute('data-theme', 'light');
-            } else {
+            if (container) {
+                // Always enforce dark mode by removing light class/attribute
                 container.classList.remove('light');
                 container.removeAttribute('data-theme');
             }
@@ -6032,6 +6133,32 @@ def create_gradio_interface():
                             scale=1
                         )
                 
+                # Chatterbox Turbo Management - Compact
+                with gr.Column():
+                    with gr.Row():
+                        gr.Markdown("🚀 **Chatterbox Turbo**", elem_classes=["fade-in"])
+                        chatterbox_turbo_status = gr.Markdown(
+                            value="⭕ Not loaded" if CHATTERBOX_TURBO_AVAILABLE else "❌ Not available",
+                            elem_classes=["fade-in"]
+                        )
+                    with gr.Row():
+                        load_chatterbox_turbo_btn = gr.Button(
+                            "🔄 Load",
+                            variant="primary",
+                            size="sm",
+                            visible=CHATTERBOX_TURBO_AVAILABLE,
+                            elem_classes=["fade-in"],
+                            scale=1
+                        )
+                        unload_chatterbox_turbo_btn = gr.Button(
+                            "🗑️ Unload",
+                            variant="secondary",
+                            size="sm",
+                            visible=CHATTERBOX_TURBO_AVAILABLE,
+                            elem_classes=["fade-in"],
+                            scale=1
+                        )
+                
                 # Kokoro TTS Management - Compact
                 with gr.Column():
                     with gr.Row():
@@ -6169,7 +6296,7 @@ def create_gradio_interface():
                 # VoxCPM Management - Compact
                 with gr.Column():
                     with gr.Row():
-                        gr.Markdown("🎤 **VoxCPM (Can crash randomly)**", elem_classes=["fade-in"])
+                        gr.Markdown("🎤 **VoxCPM 1.5**", elem_classes=["fade-in"])
                         voxcpm_status = gr.Markdown(
                             value="⭕ Not loaded" if VOXCPM_AVAILABLE else "❌ Not available",
                             elem_classes=["fade-in"]
@@ -6794,6 +6921,7 @@ Alice: I went to Japan. It was absolutely incredible!""",
                                         choices=[
                                             ("🎤 ChatterboxTTS", "ChatterboxTTS"),
                                             ("🌍 Chatterbox Multilingual", "Chatterbox Multilingual"),
+                                            ("🚀 Chatterbox Turbo", "Chatterbox Turbo"),
                                             ("🗣️ Kokoro TTS", "Kokoro TTS"),
                                             ("🐟 Fish Speech", "Fish Speech"),
                                             ("🎯 IndexTTS", "IndexTTS"),
@@ -6802,7 +6930,7 @@ Alice: I went to Japan. It was absolutely incredible!""",
                                             ("🎙️ Higgs Audio", "Higgs Audio"),
                                             ("🐱 KittenTTS", "KittenTTS")
                                         ],
-                                        value="ChatterboxTTS" if CHATTERBOX_AVAILABLE else "Kokoro TTS" if KOKORO_AVAILABLE else "Fish Speech" if FISH_SPEECH_AVAILABLE else "IndexTTS" if INDEXTTS_AVAILABLE else "F5-TTS" if F5_TTS_AVAILABLE else "Higgs Audio" if HIGGS_AUDIO_AVAILABLE else "KittenTTS",
+                                        value="ChatterboxTTS" if CHATTERBOX_AVAILABLE else "Chatterbox Turbo" if CHATTERBOX_TURBO_AVAILABLE else "Kokoro TTS" if KOKORO_AVAILABLE else "Fish Speech" if FISH_SPEECH_AVAILABLE else "IndexTTS" if INDEXTTS_AVAILABLE else "F5-TTS" if F5_TTS_AVAILABLE else "Higgs Audio" if HIGGS_AUDIO_AVAILABLE else "KittenTTS",
                                         label="🎯 TTS Engine for Audiobook",
                                         elem_classes=["fade-in"]
                                     )
@@ -7003,8 +7131,8 @@ Alice: I went to Japan. It was absolutely incredible!""",
                                             gr.Markdown("**📥 Download Models**")
                                             vibevoice_model_select = gr.Radio(
                                                 choices=[
-                                                    ("VibeVoice-1.5B (Compact, ~2.7B params)", "VibeVoice-1.5B"),
-                                                    ("VibeVoice-Large (High Quality, ~9.34B params)", "VibeVoice-Large")
+                                                    ("VIBEVOICE-1.5B (COMPACT)", "VibeVoice-1.5B"),
+                                                    ("VIBEVOICE-7B (HIGH QUALITY)", "VibeVoice-Large")
                                                 ],
                                                 value="VibeVoice-1.5B",
                                                 label="Select Model to Download",
@@ -7043,6 +7171,13 @@ Alice: I went to Japan. It was absolutely incredible!""",
                                             vibevoice_model_path = gr.Textbox(
                                                 label="📁 Model Path",
                                                 value="models/VibeVoice-1.5B",
+                                                elem_classes=["fade-in"]
+                                            )
+                                            
+                                            vibevoice_flash_attention = gr.Checkbox(
+                                                label="⚡ Use Flash Attention",
+                                                value=False,
+                                                info="Set this BEFORE loading the model. Requires compatible GPU, may not work on all systems.",
                                                 elem_classes=["fade-in"]
                                             )
                                             
@@ -7149,6 +7284,7 @@ Alice: I went to Japan. It was absolutely incredible!""",
                     choices=[
                         ("🎤 ChatterboxTTS - Voice Cloning", "ChatterboxTTS"),
                         ("🌍 Chatterbox Multilingual - 23 Languages", "Chatterbox Multilingual"),
+                        ("🚀 Chatterbox Turbo - Fast Voice Cloning", "Chatterbox Turbo"),
                         ("🗣️ Kokoro TTS - Pre-trained Voices", "Kokoro TTS"),
                         ("🐟 Fish Speech - Natural TTS", "Fish Speech"),
                         ("🎯 IndexTTS - Industrial Quality", "IndexTTS"),
@@ -7158,7 +7294,7 @@ Alice: I went to Japan. It was absolutely incredible!""",
                         ("🎤 VoxCPM - Voice Cloning TTS", "VoxCPM"),
                         ("🐱 KittenTTS - Mini Model TTS", "KittenTTS")
                     ],
-                    value="ChatterboxTTS" if CHATTERBOX_AVAILABLE else "Kokoro TTS" if KOKORO_AVAILABLE else "Fish Speech" if FISH_SPEECH_AVAILABLE else "IndexTTS" if INDEXTTS_AVAILABLE else "F5-TTS" if F5_TTS_AVAILABLE else "Higgs Audio" if HIGGS_AUDIO_AVAILABLE else "VoxCPM" if VOXCPM_AVAILABLE else "KittenTTS",
+                    value="ChatterboxTTS" if CHATTERBOX_AVAILABLE else "Chatterbox Turbo" if CHATTERBOX_TURBO_AVAILABLE else "Kokoro TTS" if KOKORO_AVAILABLE else "Fish Speech" if FISH_SPEECH_AVAILABLE else "IndexTTS" if INDEXTTS_AVAILABLE else "F5-TTS" if F5_TTS_AVAILABLE else "Higgs Audio" if HIGGS_AUDIO_AVAILABLE else "VoxCPM" if VOXCPM_AVAILABLE else "KittenTTS",
                     label="🎯 Select TTS Engine",
                     info="Choose your preferred text-to-speech engine (auto-selects when you load a model)",
                     elem_classes=["fade-in"]
@@ -7427,6 +7563,91 @@ Alice: I went to Japan. It was absolutely incredible!""",
                         chatterbox_mtl_top_p = gr.Slider(visible=False, value=1.0)
                         chatterbox_mtl_chunk_size = gr.Slider(visible=False, value=300)
                         chatterbox_mtl_seed = gr.Number(visible=False, value=0)
+            
+            # Chatterbox Turbo Tab
+            with gr.TabItem("🚀 Chatterbox Turbo", id="chatterbox_turbo_tab"):
+                if CHATTERBOX_TURBO_AVAILABLE:
+                    with gr.Group() as chatterbox_turbo_controls:
+                        gr.Markdown("**🚀 Chatterbox Turbo - Fast distilled voice cloning**")
+                        gr.Markdown("*💡 Faster inference with similar quality to standard Chatterbox*", elem_classes=["fade-in"])
+                        
+                        with gr.Row():
+                            with gr.Column(scale=2):
+                                chatterbox_turbo_ref_audio = gr.Audio(
+                                    sources=["upload", "microphone"],
+                                    type="filepath",
+                                    label="🎤 Reference Audio File (Optional)",
+                                    value=None,
+                                    elem_classes=["fade-in"]
+                                )
+                            
+                            with gr.Column(scale=1):
+                                chatterbox_turbo_exaggeration = gr.Slider(
+                                    0.25, 2, step=0.05,
+                                    label="🎭 Exaggeration",
+                                    value=0.5,
+                                    info="Higher = more dramatic",
+                                    elem_classes=["fade-in"]
+                                )
+                        
+                        with gr.Accordion("🔧 Advanced Turbo Settings", open=False, elem_classes=["fade-in"]):
+                            with gr.Row():
+                                chatterbox_turbo_temperature = gr.Slider(
+                                    0.05, 5, step=0.05,
+                                    label="🌡️ Temperature",
+                                    value=0.8,
+                                    info="Higher = more creative"
+                                )
+                                chatterbox_turbo_cfg_weight = gr.Slider(
+                                    0.0, 1, step=0.05,
+                                    label="⚡ CFG Weight",
+                                    value=0.5,
+                                    info="Speed vs quality"
+                                )
+                                chatterbox_turbo_chunk_size = gr.Slider(
+                                    100, 400, step=25,
+                                    label="📄 Chunk Size",
+                                    value=300,
+                                    info="Characters per chunk"
+                                )
+                            with gr.Row():
+                                chatterbox_turbo_repetition_penalty = gr.Slider(
+                                    1.0, 3.0, step=0.1,
+                                    label="🔁 Repetition Penalty",
+                                    value=1.2,
+                                    info="Reduce repetitions"
+                                )
+                                chatterbox_turbo_min_p = gr.Slider(
+                                    0.0, 0.5, step=0.01,
+                                    label="📊 Min P",
+                                    value=0.05,
+                                    info="Minimum probability threshold"
+                                )
+                                chatterbox_turbo_top_p = gr.Slider(
+                                    0.5, 1.0, step=0.05,
+                                    label="🎯 Top P",
+                                    value=1.0,
+                                    info="Nucleus sampling"
+                                )
+                                chatterbox_turbo_seed = gr.Number(
+                                    value=0,
+                                    label="🎲 Seed (0=random)",
+                                    info="For reproducible results"
+                                )
+                else:
+                    # Placeholder when Chatterbox Turbo is not available
+                    with gr.Group():
+                        gr.Markdown("<div style='text-align: center; padding: 40px; opacity: 0.5;'>**🚀 Chatterbox Turbo** - ⚠️ Not available - please check installation</div>")
+                        # Create dummy components to maintain consistent interface
+                        chatterbox_turbo_ref_audio = gr.Audio(visible=False, value=None)
+                        chatterbox_turbo_exaggeration = gr.Slider(visible=False, value=0.5)
+                        chatterbox_turbo_temperature = gr.Slider(visible=False, value=0.8)
+                        chatterbox_turbo_cfg_weight = gr.Slider(visible=False, value=0.5)
+                        chatterbox_turbo_repetition_penalty = gr.Slider(visible=False, value=1.2)
+                        chatterbox_turbo_min_p = gr.Slider(visible=False, value=0.05)
+                        chatterbox_turbo_top_p = gr.Slider(visible=False, value=1.0)
+                        chatterbox_turbo_chunk_size = gr.Slider(visible=False, value=300)
+                        chatterbox_turbo_seed = gr.Number(visible=False, value=0)
             
             # Kokoro TTS Tab
             with gr.TabItem("🗣️ Kokoro TTS", id="kokoro_tab"):
@@ -8217,6 +8438,30 @@ Alice: I went to Japan. It was absolutely incredible!""",
             # Don't change engine selection when unloading
             return chatterbox_mtl_status_text
         
+        def handle_load_chatterbox_turbo():
+            success, message = init_chatterbox_turbo_model()
+            if success:
+                chatterbox_turbo_status_text = "✅ Loaded (Auto-selected)"
+                # Auto-select Chatterbox Turbo engine when loaded
+                selected_engine = "Chatterbox Turbo"
+                # Auto-switch to Chatterbox Turbo tab
+                selected_tab = gr.update(selected="chatterbox_turbo_tab")
+            else:
+                chatterbox_turbo_status_text = "❌ Failed to load"
+                selected_engine = gr.update()  # No change to current selection
+                selected_tab = gr.update()  # No tab change
+            
+            if EBOOK_CONVERTER_AVAILABLE:
+                return chatterbox_turbo_status_text, selected_engine, selected_engine, selected_tab
+            else:
+                return chatterbox_turbo_status_text, selected_engine, selected_tab
+        
+        def handle_unload_chatterbox_turbo():
+            message = unload_chatterbox_turbo_model()
+            chatterbox_turbo_status_text = "⭕ Not loaded"
+            # Don't change engine selection when unloading
+            return chatterbox_turbo_status_text
+        
         def handle_load_kokoro():
             success, message = init_kokoro()
             if success:
@@ -8512,6 +8757,17 @@ Alice: I went to Japan. It was absolutely incredible!""",
                 outputs=[chatterbox_mtl_status]
             )
         
+        # Chatterbox Turbo management
+        if CHATTERBOX_TURBO_AVAILABLE:
+            load_chatterbox_turbo_btn.click(
+                fn=handle_load_chatterbox_turbo,
+                outputs=[chatterbox_turbo_status, tts_engine, ebook_tts_engine, engine_tabs] if EBOOK_CONVERTER_AVAILABLE else [chatterbox_turbo_status, tts_engine, engine_tabs]
+            )
+            unload_chatterbox_turbo_btn.click(
+                fn=handle_unload_chatterbox_turbo,
+                outputs=[chatterbox_turbo_status]
+            )
+        
         # Kokoro TTS management
         if KOKORO_AVAILABLE:
             load_kokoro_btn.click(
@@ -8770,6 +9026,9 @@ Alice: I went to Japan. It was absolutely incredible!""",
                 chatterbox_mtl_ref_audio, chatterbox_mtl_language, chatterbox_mtl_exaggeration,
                 chatterbox_mtl_temperature, chatterbox_mtl_cfg_weight, chatterbox_mtl_repetition_penalty,
                 chatterbox_mtl_min_p, chatterbox_mtl_top_p, chatterbox_mtl_chunk_size, chatterbox_mtl_seed,
+                chatterbox_turbo_ref_audio, chatterbox_turbo_exaggeration, chatterbox_turbo_temperature,
+                chatterbox_turbo_cfg_weight, chatterbox_turbo_repetition_penalty, chatterbox_turbo_min_p,
+                chatterbox_turbo_top_p, chatterbox_turbo_chunk_size, chatterbox_turbo_seed,
                 kokoro_voice, kokoro_speed,
                 fish_ref_audio, fish_ref_text, fish_temperature, fish_top_p, fish_repetition_penalty, fish_max_tokens, fish_seed,
                 indextts_ref_audio, indextts_temperature, indextts_seed,
@@ -9260,6 +9519,9 @@ Alice: Definitely visit Kyoto and try authentic ramen!"""
                 # Chatterbox Multilingual parameters
                 cb_mtl_ref_audio, cb_mtl_lang, cb_mtl_exag, cb_mtl_temp, cb_mtl_cfg,
                 cb_mtl_rep_pen, cb_mtl_min_p, cb_mtl_top_p, cb_mtl_seed,
+                # Chatterbox Turbo parameters
+                cb_turbo_ref_audio, cb_turbo_exag, cb_turbo_temp, cb_turbo_cfg,
+                cb_turbo_rep_pen, cb_turbo_min_p, cb_turbo_top_p, cb_turbo_seed,
                 kok_voice, kok_speed,
                 fish_ref_audio, fish_ref_text, fish_temp, fish_top_p, fish_rep_pen, fish_max_tok, fish_seed_val,
                 # IndexTTS parameters
@@ -9300,6 +9562,9 @@ Alice: Definitely visit Kyoto and try authentic ramen!"""
                     # Chatterbox Multilingual parameters
                     cb_mtl_ref_audio, cb_mtl_lang, cb_mtl_exag, cb_mtl_temp, cb_mtl_cfg,
                     cb_mtl_rep_pen, cb_mtl_min_p, cb_mtl_top_p, cb_mtl_seed,
+                    # Chatterbox Turbo parameters
+                    cb_turbo_ref_audio, cb_turbo_exag, cb_turbo_temp, cb_turbo_cfg,
+                    cb_turbo_rep_pen, cb_turbo_min_p, cb_turbo_top_p, cb_turbo_seed,
                     kok_voice, kok_speed,
                     fish_ref_audio, fish_ref_text, fish_temp, fish_top_p, fish_rep_pen, fish_max_tok, fish_seed_val,
                     # IndexTTS parameters
@@ -9371,6 +9636,10 @@ Alice: Definitely visit Kyoto and try authentic ramen!"""
                     chatterbox_mtl_ref_audio, chatterbox_mtl_language, chatterbox_mtl_exaggeration,
                     chatterbox_mtl_temperature, chatterbox_mtl_cfg_weight, chatterbox_mtl_repetition_penalty,
                     chatterbox_mtl_min_p, chatterbox_mtl_top_p, chatterbox_mtl_seed,
+                    # Chatterbox Turbo parameters
+                    chatterbox_turbo_ref_audio, chatterbox_turbo_exaggeration, chatterbox_turbo_temperature,
+                    chatterbox_turbo_cfg_weight, chatterbox_turbo_repetition_penalty,
+                    chatterbox_turbo_min_p, chatterbox_turbo_top_p, chatterbox_turbo_seed,
                     # Kokoro parameters
                     kokoro_voice, kokoro_speed,
                     # Fish Speech parameters
@@ -9465,12 +9734,12 @@ Alice: Definitely visit Kyoto and try authentic ramen!"""
             )
             
             # Model management
-            def handle_vibevoice_load(selected_model_path, path):
+            def handle_vibevoice_load(selected_model_path, path, use_flash_attention):
                 # Prefer radio selection; fall back to manual path
                 effective_path = selected_model_path or path
                 if not effective_path:
                     return "❌ No model path selected"
-                success, message = init_vibevoice_model(effective_path)
+                success, message = init_vibevoice_model(effective_path, use_flash_attention=use_flash_attention)
                 return message
             
             def handle_vibevoice_unload():
@@ -9478,7 +9747,7 @@ Alice: Definitely visit Kyoto and try authentic ramen!"""
             
             vibevoice_load_btn.click(
                 fn=handle_vibevoice_load,
-                inputs=[vibevoice_downloaded_models, vibevoice_model_path],
+                inputs=[vibevoice_downloaded_models, vibevoice_model_path, vibevoice_flash_attention],
                 outputs=[vibevoice_model_status]
             )
             
