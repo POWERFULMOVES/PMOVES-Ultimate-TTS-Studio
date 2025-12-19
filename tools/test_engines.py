@@ -5,9 +5,14 @@ This script runs inside the Pinokio conda environment and tests
 each TTS engine by loading it and optionally running synthesis.
 
 Usage:
-    python tools/test_engines.py [--synthesis]
+    python tools/test_engines.py [--url URL]
+
+Options:
+    --url URL   Gradio server URL (default: http://127.0.0.1:7860/)
 """
 
+import argparse
+import os
 import sys
 
 try:
@@ -15,6 +20,9 @@ try:
 except ImportError:
     print("ERROR: gradio_client required. Install with: pip install gradio_client")
     sys.exit(1)
+
+# Default URL - can be overridden via --url or GRADIO_URL env var
+DEFAULT_URL = os.getenv("GRADIO_URL", "http://127.0.0.1:7860/")
 
 
 # Engine definitions: (id, display_name, load_endpoint, requires_ref_audio)
@@ -38,13 +46,19 @@ def print_header(text: str) -> None:
 
 def main():
     """Test all TTS engines."""
+    parser = argparse.ArgumentParser(description="Test TTS engines")
+    parser.add_argument("--url", type=str, default=DEFAULT_URL, help="Gradio server URL")
+    args = parser.parse_args()
+
+    url = args.url.rstrip("/") + "/"
+
     print_header("TTS Engine Test Suite")
-    print("Target: http://127.0.0.1:7860/")
+    print(f"Target: {url}")
 
     # Connect to Gradio
     print("\nConnecting to Gradio...")
     try:
-        client = Client("http://127.0.0.1:7860/", verbose=False)
+        client = Client(url, verbose=False)
         print("Connected successfully")
     except Exception as e:
         print(f"ERROR: Failed to connect: {e}")
