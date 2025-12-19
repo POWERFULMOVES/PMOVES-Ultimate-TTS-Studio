@@ -9886,9 +9886,12 @@ if __name__ == "__main__":
         server_name = os.environ.get("GRADIO_SERVER_NAME", "0.0.0.0")
         server_port = int(os.environ.get("GRADIO_SERVER_PORT", os.environ.get("PORT", "7860")))
         share = os.environ.get("GRADIO_SHARE", "false").strip().lower() in ("1", "true", "yes", "y")
+        mcp_server = os.environ.get("GRADIO_MCP_SERVER", "true").strip().lower() in ("1", "true", "yes", "y")
         demo.launch(
             server_name=server_name,
             server_port=server_port,
             share=share,
+            show_api=True,
+            mcp_server=mcp_server,
             show_error=True
         ) 
