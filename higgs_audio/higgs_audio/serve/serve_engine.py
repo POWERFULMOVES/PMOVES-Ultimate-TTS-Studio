@@ -3,7 +3,7 @@ import base64
 import torch
 import numpy as np
 from io import BytesIO
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Union
 from copy import deepcopy
 from transformers import AutoTokenizer, AutoProcessor
@@ -215,7 +215,7 @@ class HiggsAudioResponse:
     generated_audio_tokens: Optional[np.ndarray] = None
     sampling_rate: Optional[int] = None
     generated_text: str = ""
-    generated_text_tokens: np.ndarray = np.array([])
+    generated_text_tokens: np.ndarray = field(default_factory=lambda: np.array([]))
     usage: Optional[dict] = None
 
 
