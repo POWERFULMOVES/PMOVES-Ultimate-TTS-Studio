@@ -166,7 +166,7 @@ async def get_service_info(
             slug=slug,
             name=f"{slug} (from env)",
             description=f"Service URL from environment variable",
-            health_check_url=env_url,
+            health_check_url=f"{env_url.rstrip('/')}/healthz",
             default_port=default_port,
             tier=ServiceTier.API,  # Default tier
         )
@@ -177,7 +177,7 @@ async def get_service_info(
         slug=slug,
         name=f"{slug} (fallback)",
         description=f"Service resolved via Docker DNS fallback",
-        health_check_url=fallback_url,
+        health_check_url=f"{fallback_url}/healthz",
         default_port=default_port,
         tier=ServiceTier.API,
     )

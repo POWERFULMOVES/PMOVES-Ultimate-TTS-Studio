@@ -178,23 +178,30 @@ class ServiceAnnouncer:
         Returns:
             True if announcement published successfully
         """
+        nc = None
         try:
             from nats.aio.client import Client as NATS
 
             announcement = self.create_announcement()
 
-            nc = await NATS.connect(self.nats_url, connect_timeout=5)
+            nc = NATS()
+            await nc.connect(self.nats_url, connect_timeout=5)
             await nc.publish(
                 ServiceAnnouncement.SUBJECT,
                 announcement.to_json().encode(),
             )
             await nc.flush()
-            await nc.close()
 
             return True
         except Exception as e:
             print(f"Failed to announce service: {e}")
             return False
+        finally:
+            if nc:
+                try:
+                    await nc.close()
+                except Exception:
+                    pass
 
     async def announce_with_retry(
         self, max_retries: int = 3, delay: float = 1.0
