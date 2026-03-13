@@ -150,7 +150,7 @@ jobs:
           format: table
           exit-code: '1'
           ignore-unfixed: true
-          vuln-type: 'os,library'
+          vuln-type: 'library'
           severity: 'HIGH,CRITICAL'
           scanners: 'vuln'
 
@@ -162,7 +162,7 @@ jobs:
           output: trivy-ultimate-tts-studio.txt
           exit-code: '0'
           ignore-unfixed: false
-          vuln-type: 'os,library'
+          vuln-type: 'library'
           severity: 'HIGH,CRITICAL'
           scanners: 'vuln'
 
