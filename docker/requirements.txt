@@ -1,6 +1,6 @@
 # Minimal runtime deps for the Gradio UI and VibeVoice tab.
 # Optional engines (Fish Speech, F5, etc.) are disabled automatically when deps are missing.
-gradio==5.35.0
+gradio==6.7.0
 numpy==1.26.0
 scipy
 soundfile
@@ -14,3 +14,9 @@ imageio-ffmpeg
 requests
 sentencepiece
 
+
+# Security fixes for HIGH CVEs
+pillow>=12.1.1
+setuptools>=78.1.1
+urllib3>=2.6.3
+wheel>=0.46.2
